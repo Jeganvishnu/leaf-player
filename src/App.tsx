@@ -550,8 +550,8 @@ export default function App() {
     }
   };
 
-  const handleNextSong = async () => {
-    if (isRepeat && audioRef.current) {
+  const handleNextSong = async (isAuto = false) => {
+    if (isAuto && isRepeat && audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => {});
       return;
@@ -602,8 +602,8 @@ export default function App() {
 
       navigator.mediaSession.setActionHandler('play', () => setIsPlaying(true));
       navigator.mediaSession.setActionHandler('pause', () => setIsPlaying(false));
-      navigator.mediaSession.setActionHandler('previoustrack', handlePrevSong);
-      navigator.mediaSession.setActionHandler('nexttrack', handleNextSong);
+      navigator.mediaSession.setActionHandler('previoustrack', () => handlePrevSong());
+      navigator.mediaSession.setActionHandler('nexttrack', () => handleNextSong());
     }
   }, [currentSong, songs, isShuffle, isRepeat]);
 
@@ -612,7 +612,7 @@ export default function App() {
       <audio 
         ref={audioRef}
         src={currentSong.audioUrl || ''}
-        onEnded={handleNextSong}
+        onEnded={() => handleNextSong(true)}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
       />
@@ -659,12 +659,18 @@ export default function App() {
                 <div className="w-2 h-2 bg-black rounded-full" />
               </div>
               <span className="text-xl font-bold tracking-tight text-emerald-400">Leaf Player</span>
+              <span className="text-[8px] sm:text-[10px] text-zinc-500 font-medium ml-1 mt-1 opacity-80 hover:text-emerald-400 hover:drop-shadow-[0_0_8px_rgba(52,211,153,0.5)] transition-all duration-300 cursor-default select-none truncate max-w-[120px]">
+                Stream it. Support it. Don’t steal it
+              </span>
             </div>
             
           </div>
 
-          <div className="flex items-center gap-4 pointer-events-auto">
-            <div className="hidden md:flex items-center bg-zinc-900/80 border border-zinc-800 rounded-full px-4 py-2 w-64 focus-within:border-zinc-600 transition-colors">
+          <div className="flex items-center gap-8 pointer-events-auto">
+            <span className="hidden lg:block text-zinc-500 text-sm font-semibold tracking-wide transition-all duration-300 hover:text-emerald-400 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.6)] cursor-default select-none">
+              Stream it. Support it. Don’t steal it
+            </span>
+            <div className="hidden md:flex items-center bg-zinc-900/80 border border-zinc-800 rounded-full px-4 py-2 w-64 focus-within:border-emerald-500/50 transition-colors shadow-inner">
               <Search size={16} className="text-zinc-400 mr-2" />
               <input 
                 type="text" 
@@ -1580,7 +1586,10 @@ export default function App() {
       {/* --- Persistent Bottom Player (Desktop & Mobile Mini) --- */}
       {currentSong.id !== 0 && isPlayerVisible && (
         <div className="fixed bottom-0 left-0 right-0 md:left-64 z-40 px-2 pb-20 md:pb-4 md:px-6 pointer-events-none">
-          <div className="bg-[#121212]/95 backdrop-blur-xl border border-zinc-800/50 rounded-2xl md:rounded-3xl shadow-2xl p-2 md:p-3 flex items-center justify-between pointer-events-auto max-w-6xl mx-auto relative">
+          <div 
+            className="bg-[#121212]/95 backdrop-blur-xl border border-zinc-800/50 rounded-2xl md:rounded-3xl shadow-2xl p-2 md:p-3 flex items-center justify-between pointer-events-auto max-w-6xl mx-auto relative cursor-pointer"
+            onClick={handleExpandMobilePlayer}
+          >
           
           <button 
             onClick={(e) => { e.stopPropagation(); handleCancel(); }}
@@ -1591,8 +1600,7 @@ export default function App() {
           
           {/* Song Info (Clickable to expand) */}
           <div 
-            className="flex items-center gap-3 w-[45%] md:w-[30%] min-w-[140px] cursor-pointer"
-            onClick={handleExpandMobilePlayer}
+            className="flex items-center gap-3 w-[45%] md:w-[30%] min-w-[140px]"
           >
             <img src={currentSong.cover} alt="Cover" className="w-12 h-12 md:w-14 md:h-14 rounded-lg object-cover shadow-md shrink-0" />
             <div className="overflow-hidden flex-1 shrink-0">
@@ -1602,24 +1610,44 @@ export default function App() {
           </div>
 
           {/* Controls (Desktop) */}
-          <div className="hidden md:flex flex-col items-center justify-center flex-1 w-full px-2 max-w-[40%]">
+          <div className="hidden md:flex flex-col items-center justify-center flex-1 w-full px-2 max-w-[40%]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-4 lg:gap-6 mb-2">
-              <button onClick={() => setIsShuffle(!isShuffle)} className={`transition-colors shrink-0 ${isShuffle ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-100'}`}><Shuffle size={18} /></button>
-              <button onClick={handlePrevSong} className="text-zinc-300 hover:text-white transition-colors shrink-0"><SkipBack size={24} fill="currentColor" /></button>
               <button 
-                onClick={togglePlay}
+                onClick={(e) => { e.stopPropagation(); setIsShuffle(!isShuffle); }} 
+                className={`transition-colors shrink-0 ${isShuffle ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-100'}`}
+              >
+                <Shuffle size={18} />
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); handlePrevSong(); }} 
+                className="text-zinc-300 hover:text-white transition-colors shrink-0"
+              >
+                <SkipBack size={24} fill="currentColor" />
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); togglePlay(); }}
                 className="w-10 h-10 bg-emerald-400 rounded-full flex items-center justify-center text-black hover:scale-105 transition-transform shadow-lg shadow-emerald-400/20 shrink-0"
               >
                 {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
               </button>
-              <button onClick={handleNextSong} className="text-zinc-300 hover:text-white transition-colors shrink-0"><SkipForward size={24} fill="currentColor" /></button>
-              <button onClick={() => setIsRepeat(!isRepeat)} className={`transition-colors shrink-0 ${isRepeat ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-100'}`}><Repeat size={18} /></button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); handleNextSong(); }} 
+                className="text-zinc-300 hover:text-white transition-colors shrink-0"
+              >
+                <SkipForward size={24} fill="currentColor" />
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setIsRepeat(!isRepeat); }} 
+                className={`transition-colors shrink-0 ${isRepeat ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-100'}`}
+              >
+                <Repeat size={18} />
+              </button>
             </div>
             <div className="flex items-center gap-3 w-full text-xs text-zinc-500 font-medium">
               <span className="shrink-0 w-8 text-right">{formatTime(currentTime)}</span>
               <div 
                 className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden group cursor-pointer w-full max-w-full"
-                onClick={handleSeek}
+                onClick={(e) => { e.stopPropagation(); handleSeek(e); }}
               >
                 <div 
                   className="h-full rounded-full relative transition-all duration-100"
@@ -1638,7 +1666,10 @@ export default function App() {
 
           {/* Controls (Mobile Mini) */}
           <div className="flex md:hidden items-center gap-4 pr-2 shrink-0">
-            <button onClick={togglePlay} className="text-zinc-100">
+            <button 
+              onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
+              className="text-zinc-100 p-2"
+            >
               {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
             </button>
           </div>
@@ -1647,10 +1678,10 @@ export default function App() {
           <div className="hidden md:flex items-center justify-end gap-6 w-[30%] min-w-[140px] text-zinc-400">
             <Heart 
               size={18} 
-              onClick={toggleLike}
+              onClick={(e) => { e.stopPropagation(); toggleLike(e); }}
               className={`shrink-0 cursor-pointer transition-colors ${currentSong.liked ? 'text-emerald-400 fill-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`} 
             />
-            <div className="flex flex-col items-center gap-1 group">
+            <div className="flex flex-col items-center gap-1 group" onClick={(e) => e.stopPropagation()}>
                <input 
                   type="range"
                   min="0"
@@ -1664,12 +1695,12 @@ export default function App() {
                     writingMode: 'bt-lr' as any
                   }}
                />
-               <button onClick={toggleMute} className="hover:text-zinc-100 transition-colors shrink-0 outline-none pb-1">
+               <button onClick={(e) => { e.stopPropagation(); toggleMute(); }} className="hover:text-zinc-100 transition-colors shrink-0 outline-none pb-1">
                  {volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                </button>
             </div>
-            <button className="hover:text-zinc-100 transition-colors shrink-0"><ListMusic size={18} /></button>
-            <button onClick={handleExpandMobilePlayer} className="hover:text-zinc-100 transition-colors shrink-0"><Maximize2 size={18} /></button>
+            <button onClick={(e) => e.stopPropagation()} className="hover:text-zinc-100 transition-colors shrink-0"><ListMusic size={18} /></button>
+            <button onClick={(e) => { e.stopPropagation(); handleExpandMobilePlayer(); }} className="hover:text-zinc-100 transition-colors shrink-0"><Maximize2 size={18} /></button>
           </div>
         </div>
       </div>
@@ -1717,58 +1748,61 @@ export default function App() {
             <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-[#0a0a0a]/80 to-[#0a0a0a]" />
 
             {/* Content */}
-            <div className="relative z-10 flex flex-col h-full p-6 pb-12">
+            <div className="relative z-10 flex flex-col h-screen p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
               {/* Header */}
               <div className="flex items-center justify-between mb-8">
                 <button onClick={() => setIsMobilePlayerExpanded(false)} className="p-2 -ml-2 text-zinc-300">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </button>
                 <div className="text-center">
-                  <p className="text-xs font-semibold text-zinc-400 tracking-wider uppercase">Playing from playlist</p>
-                  <p className="text-sm font-bold text-zinc-100">Midnight Sanctuary</p>
+                  <p className="text-[10px] font-semibold text-zinc-400 tracking-wider uppercase">Playing from playlist</p>
+                  <p className="text-xs font-bold text-zinc-100">Midnight Sanctuary</p>
                 </div>
                 <button className="p-2 -mr-2 text-zinc-300"><MoreHorizontal size={24} /></button>
               </div>
 
-              {/* Artwork */}
-              <div className="flex-1 flex items-center justify-center mb-8">
+              {/* Artwork & Vertical Volume */}
+              <div className="flex-[1.5] flex items-center justify-center gap-4 min-h-0 my-4 px-4">
+                <div className="w-1.5" /> {/* Spacer for balance */}
                 <motion.div 
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ delay: 0.1 }}
-                  className="aspect-square w-full max-w-[320px] rounded-2xl overflow-hidden shadow-2xl relative"
+                  className="aspect-square w-full max-w-[70vw] md:max-w-xs rounded-2xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] relative"
                 >
                   <img src={currentSong.cover} alt="Cover" className="w-full h-full object-cover" loading="lazy" />
                   <div className="absolute inset-0 ring-1 ring-white/10 rounded-2xl pointer-events-none" />
                 </motion.div>
+                
+                {/* Vertical Volume Adjuster on Right */}
+                <div className="flex flex-col items-center gap-2">
+                   <input 
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={volume}
+                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    className="w-1.5 h-32 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-emerald-400 transition-all hover:w-2"
+                    style={{ 
+                      WebkitAppearance: 'slider-vertical',
+                      writingMode: 'bt-lr' as any
+                    }}
+                  />
+                  <button onClick={toggleMute} className="text-zinc-500 hover:text-zinc-300 transition-colors">
+                    {volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                  </button>
+                </div>
               </div>
 
               {/* Info & Controls */}
-              <div className="mt-auto">
+              <div className="shrink-0 mt-auto">
                 <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="text-2xl font-bold text-white mb-1">{currentSong.title}</h2>
-                    <p className="text-lg text-zinc-400 font-medium truncate">{currentSong.artist}</p>
+                  <div className="max-w-[70%]">
+                    <h2 className="text-xl md:text-2xl font-bold text-white mb-0.5 truncate">{currentSong.title}</h2>
+                    <p className="text-base md:text-lg text-zinc-400 font-medium truncate">{currentSong.artist}</p>
                   </div>
                   <div className="flex items-center gap-4">
-                    <div className="flex flex-col items-center gap-2">
-                       <input 
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={volume}
-                        onChange={(e) => setVolume(parseFloat(e.target.value))}
-                        className="w-1.5 h-20 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-emerald-400 transition-all"
-                        style={{ 
-                          WebkitAppearance: 'slider-vertical',
-                          writingMode: 'bt-lr' as any
-                        }}
-                      />
-                      <button onClick={toggleMute} className="text-zinc-500 hover:text-zinc-300 transition-colors">
-                        {volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
-                      </button>
-                    </div>
                     <button onClick={toggleLike} className="shrink-0 p-2">
                       <Heart size={28} className={currentSong.liked ? 'text-emerald-400 fill-emerald-400' : 'text-zinc-300'} />
                     </button>
@@ -1799,7 +1833,7 @@ export default function App() {
                 </div>
 
                 {/* Main Controls */}
-                <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center justify-between mb-6">
                   <button onClick={() => setIsShuffle(!isShuffle)} className={`transition-colors ${isShuffle ? 'text-emerald-400' : 'text-zinc-400'}`}><Shuffle size={24} /></button>
                   <button onClick={handlePrevSong} className="text-zinc-100 hover:text-white transition-colors"><SkipBack size={36} fill="currentColor" /></button>
                   <button 
@@ -1835,7 +1869,7 @@ export default function App() {
         src={currentSong.audioUrl || ''} 
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
-        onEnded={handleNextSong}
+        onEnded={() => handleNextSong(true)}
         autoPlay={isPlaying}
       />
     </div>
