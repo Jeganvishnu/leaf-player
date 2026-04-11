@@ -115,7 +115,10 @@ export default function App() {
   const [statusList, setStatusList] = useState<string[]>([]);
   const [currentUploadingIndex, setCurrentUploadingIndex] = useState<number | null>(null);
   const [globalStatus, setGlobalStatus] = useState<string | null>(null);
+  const [sortOption, setSortOption] = useState<'default' | 'az' | 'recent' | 'most'>('default');
   const [isPlayerVisible, setIsPlayerVisible] = useState(true);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [songLoadingStates, setSongLoadingStates] = useState<Record<number, boolean>>({});
 
   const updateProgress = (index: number, value: number) => {
     setProgressList(prev => {
@@ -132,6 +135,22 @@ export default function App() {
       return updated;
     });
   };
+
+  const sortedSongs = useMemo(() => {
+    let result = [...songs];
+    if (sortOption === 'az') {
+      result.sort((a, b) => a.title.localeCompare(b.title));
+    } else if (sortOption === 'recent') {
+      result.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id || 0);
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id || 0);
+        return dateB - dateA;
+      });
+    } else if (sortOption === 'most') {
+      result.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
+    }
+    return result;
+  }, [songs, sortOption]);
 
   // State Persistence - Save Song and State
   useEffect(() => {
@@ -177,11 +196,52 @@ export default function App() {
     }
   }, []);
 
-  const getCoverLabel = (source: string | null) => {
-    if (source === "auto") return "Auto-selected cover ⚡";
-    if (source === "manual") return "Custom cover uploaded 🖼️";
-    if (source === "suggested") return "Used suggested cover ✅";
-    return null;
+  const getCoverStatus = (song: any) => {
+    if (song.coverStatus) return song.coverStatus;
+    
+    // Derive for existing songs
+    const url = song.cover || '';
+    if (url.includes('unsplash.com')) return 'system';
+    if (url.includes('mzstatic.com') || url.includes('apple.com')) return 'user';
+    if (url.includes('cloudinary.com')) return 'custom';
+    if (!url || url.includes('placeholder')) return 'warning';
+    
+    // Check for aspect ratio (hacky way for demo)
+    if (song.title?.length > 20 && !song.coverPublicId) return 'warning';
+    
+    return 'system';
+  };
+
+  const renderCoverLabel = (song: any) => {
+    const status = getCoverStatus(song);
+    let label = "SYSTEM";
+    let colorClass = "cover-label-red";
+
+    switch (status) {
+      case 'warning':
+        label = "WARNING";
+        colorClass = "cover-label-yellow";
+        break;
+      case 'user':
+        label = "USER";
+        colorClass = "cover-label-green";
+        break;
+      case 'custom':
+        label = "CUSTOM";
+        colorClass = "cover-label-blue";
+        break;
+      case 'system':
+      default:
+        label = "DEFAULT";
+        colorClass = "cover-label-red";
+        break;
+    }
+
+    return (
+      <div className={`cover-label ${colorClass} ${song.isStatic ? 'cover-label-static' : ''}`}>
+        {label}
+      </div>
+    );
   };
 
   const handleCancel = () => {
@@ -216,6 +276,7 @@ export default function App() {
 
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let totalBytes = 0;
@@ -249,14 +310,29 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.play().catch(e => console.error("Playback failed: ", e));
-      } else {
-        audioRef.current.pause();
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const playAudio = async () => {
+      try {
+        if (isPlaying && currentSong.audioUrl) {
+          // Only play if the src is actually set
+          if (audio.src !== currentSong.audioUrl) {
+            audio.load();
+          }
+          await audio.play();
+        } else {
+          audio.pause();
+        }
+      } catch (e) {
+        if (e instanceof Error && e.name !== 'AbortError') {
+          console.error("Playback failed: ", e);
+        }
       }
-    }
-  }, [isPlaying, currentSong]);
+    };
+
+    playAudio();
+  }, [isPlaying, currentSong.audioUrl]);
 
   // Upload Form State
   const [uploadTitle, setUploadTitle] = useState('');
@@ -283,6 +359,17 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [uploadTitle, uploadMode]);
+
+  const urlToFile = async (url: string, filename: string): Promise<File | null> => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      return new File([blob], filename, { type: blob.type });
+    } catch (e) {
+      console.error("Failed to convert URL to File:", e);
+      return null;
+    }
+  };
 
   const uploadToCloudinary = (file: File, onProgress?: (percent: number) => void) => {
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
@@ -352,29 +439,53 @@ export default function App() {
       }
     }
 
-    const newSong = {
-      id: Date.now(),
-      title: uploadTitle,
-      artist: uploadArtist,
-      time: uploadAudioUrl?.duration ? formatTime(uploadAudioUrl.duration) : '0:00',
-      cover: uploadCover?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150&h=150&fit=crop&q=80',
-      coverPublicId: uploadCover?.public_id,
-      audioUrl: uploadAudioUrl?.url || '',
-      audioPublicId: uploadAudioUrl?.public_id,
-      audioBytes: uploadAudioUrl?.bytes || 0,
-      coverBytes: uploadCover?.bytes || 0,
-      fingerprint: uploadFingerprint,
-      liked: false
-    };
+    setIsUploading(true);
+    let finalCover = uploadCover;
 
-    await addDoc(collection(db, "songs"), newSong);
-    setUploadTitle('');
-    setUploadArtist('');
-    setUploadCover('');
-    setUploadCoverSource(null);
-    setSuggestedMatches([]);
-    setUploadAudioUrl('');
-    setCurrentView('home'); 
+    try {
+      // If it's a synced cover that hasn't finished uploading yet, wait for it
+      if (uploadCover && uploadCover.url && !uploadCover.public_id) {
+        try {
+          const file = await urlToFile(uploadCover.url, "artwork.jpg");
+          if (file) {
+            const uploaded = await uploadToCloudinary(file);
+            if (uploaded) finalCover = uploaded;
+          }
+        } catch (e) {
+          console.error("Failed to upload synced artwork:", e);
+        }
+      }
+
+      const newSong = {
+        id: Date.now(),
+        title: uploadTitle,
+        artist: uploadArtist,
+        time: uploadAudioUrl?.duration ? formatTime(uploadAudioUrl.duration) : '0:00',
+        cover: finalCover?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150&h=150&fit=crop&q=80',
+        coverPublicId: finalCover?.public_id,
+        audioUrl: uploadAudioUrl?.url || '',
+        audioPublicId: uploadAudioUrl?.public_id,
+        audioBytes: uploadAudioUrl?.bytes || 0,
+        coverBytes: finalCover?.bytes || 0,
+        fingerprint: uploadFingerprint,
+        coverStatus: uploadCoverSource === 'manual' ? 'custom' : (uploadCoverSource === 'auto' || uploadCoverSource === 'suggested' ? 'user' : 'system'),
+        liked: false
+      };
+
+      await addDoc(collection(db, "songs"), newSong);
+      setUploadTitle('');
+      setUploadArtist('');
+      setUploadCover('');
+      setUploadCoverSource(null);
+      setSuggestedMatches([]);
+      setUploadAudioUrl('');
+      setCurrentView('home');
+    } catch (e) {
+      console.error("Upload failed:", e);
+      alert("Failed to release song to sanctuary.");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const createPlaylist = async (name: string) => {
@@ -412,10 +523,27 @@ export default function App() {
   };
 
   const generateFingerprint = async (file: File) => {
-    const buffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    // Read in chunks to avoid blocking/high memory usage for large files
+    const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB chunks
+    if (file.size <= CHUNK_SIZE) {
+      const buffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+      return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    
+    // For large files, hash first and last MB + size to generate a unique fingerprint quickly
+    const start = await file.slice(0, CHUNK_SIZE).arrayBuffer();
+    const end = await file.slice(file.size - CHUNK_SIZE).arrayBuffer();
+    const combined = new Uint8Array(start.byteLength + end.byteLength + 8);
+    combined.set(new Uint8Array(start), 0);
+    combined.set(new Uint8Array(end), start.byteLength);
+    
+    // Append size to the buffer
+    const sizeBuffer = new Float64Array([file.size]);
+    combined.set(new Uint8Array(sizeBuffer.buffer), start.byteLength + end.byteLength);
+    
+    const hashBuffer = await crypto.subtle.digest("SHA-256", combined);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
   const deleteSong = async (songId: number) => {
@@ -456,7 +584,7 @@ export default function App() {
     } catch (e) { }
   };
 
-  const playSong = (song: any) => {
+  const playSong = async (song: any) => {
     if (currentSong.id !== 0 && currentSong.id !== song.id) {
       recordTransition(currentSong.id, song.id, currentTime, duration);
     }
@@ -465,7 +593,6 @@ export default function App() {
     setIsPlayerVisible(true);
     
     if (currentSong.id === song.id && wasClosed) {
-      // Just resume if it was the same song
       const savedTime = localStorage.getItem("player_time");
       if (savedTime && audioRef.current) {
         audioRef.current.currentTime = parseFloat(savedTime);
@@ -474,21 +601,21 @@ export default function App() {
       return;
     }
 
+    // Optimization: Don't reload if url is the same
+    if (song.audioUrl === currentSong.audioUrl && currentSong.id !== 0) {
+      setIsPlaying(true);
+      return;
+    }
+
+    // Reset current time for new song
+    setCurrentTime(0);
     setCurrentSong(song);
     setIsPlaying(true);
+    
     setRecentlyPlayed(prev => {
       const filtered = prev.filter(s => s.id !== song.id);
       return [song, ...filtered].slice(0, 5);
     });
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      if (!song.audioUrl) {
-        audioRef.current.pause();
-        audioRef.current.removeAttribute('src');
-        audioRef.current.load();
-        setIsPlaying(false);
-      }
-    }
   };
   const toggleLike = async (e: React.MouseEvent, id?: number) => {
     e.stopPropagation();
@@ -514,8 +641,13 @@ export default function App() {
   const handleLoadedMetadata = () => {
     if (audioRef.current) {
       setDuration(audioRef.current.duration);
+      setIsBuffering(false);
     }
   };
+
+  const handleWaiting = () => setIsBuffering(true);
+  const handlePlaying = () => setIsBuffering(false);
+  const handleCanPlay = () => setIsBuffering(false);
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     if (audioRef.current) {
@@ -609,13 +741,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full bg-[#0a0a0a] text-zinc-100 overflow-hidden font-sans selection:bg-emerald-500/30">
-      <audio 
-        ref={audioRef}
-        src={currentSong.audioUrl || ''}
-        onEnded={() => handleNextSong(true)}
-        onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
-      />
+
       
       {/* --- Desktop Sidebar --- */}
       <aside className="hidden md:flex flex-col w-64 bg-[#0f0f0f] border-r border-zinc-800/50 p-6 z-20">
@@ -651,7 +777,7 @@ export default function App() {
       <main className="flex-1 flex flex-col relative overflow-hidden">
         
         {/* Top Navigation Bar */}
-        <header className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-[#0a0a0a] to-transparent z-10 flex items-center justify-between px-6 md:px-10 pointer-events-none">
+        <header className="sticky top-0 h-20 bg-[#0a0a0a]/70 backdrop-blur-xl border-b border-zinc-800/30 z-30 flex items-center justify-between px-6 md:px-10 shrink-0">
           <div className="flex items-center gap-6 pointer-events-auto">
             {/* Mobile Logo */}
             <div className="md:hidden flex items-center gap-2">
@@ -687,7 +813,7 @@ export default function App() {
         </header>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto pb-32 pt-20 px-6 md:px-10 scrollbar-hide">
+        <div className="flex-1 overflow-y-auto pb-32 pt-6 px-6 md:px-10 scrollbar-hide">
           <AnimatePresence mode="wait">
             {currentView === 'home' && (
               <motion.div key="home" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="flex flex-col gap-10">
@@ -697,19 +823,26 @@ export default function App() {
                     <div className="flex items-center justify-between mb-6">
                       <h2 className="text-2xl font-bold tracking-tight">Continue Listening</h2>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6">
+                    <div className="horizontal-scroll-section">
                       {recentlyPlayed.map((album) => (
-                        <div key={album.id} className="group cursor-pointer" onClick={() => playSong(album)}>
-                          <div className="relative aspect-square rounded-2xl overflow-hidden mb-4 bg-zinc-800">
-                            <img src={album.cover || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150&h=150&fit=crop&q=80'} alt={album.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                        <div 
+                          key={album.id} 
+                          className="neo-card group cursor-pointer shrink-0 w-48 p-3" 
+                          onClick={() => playSong(album)}
+                        >
+                          <div className="album-cover-container aspect-square rounded-xl overflow-hidden mb-4 bg-zinc-800">
+                            {renderCoverLabel(album)}
+                            <img src={album.cover || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150&h=150&fit=crop&q=80'} alt={album.title} className="album-cover-image w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                               <button className="w-12 h-12 bg-emerald-400 rounded-full flex items-center justify-center text-black shadow-xl transform translate-y-4 group-hover:translate-y-0 transition-all duration-300">
                                 <Play size={24} fill="currentColor" className="ml-1" />
                               </button>
                             </div>
                           </div>
-                          <h3 className="font-semibold text-zinc-100 truncate">{album.title}</h3>
-                          <p className="text-sm text-zinc-500 truncate">{album.artist}</p>
+                          <div className="px-1">
+                            <h3 className="font-semibold text-zinc-100 truncate text-sm">{album.title}</h3>
+                            <p className="text-xs text-zinc-500 truncate">{album.artist}</p>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -720,9 +853,29 @@ export default function App() {
                 <section>
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-bold tracking-tight">Your Tracks</h2>
+                    <div className="flex items-center gap-2 bg-zinc-900/50 border border-zinc-800/50 rounded-lg p-1">
+                      {[
+                        { id: 'default', label: 'Default' },
+                        { id: 'az', label: 'A-Z' },
+                        { id: 'recent', label: 'New' },
+                        { id: 'most', label: 'Top' }
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          onClick={() => setSortOption(opt.id as any)}
+                          className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${
+                            sortOption === opt.id 
+                              ? 'bg-emerald-400 text-black shadow-[0_0_10px_rgba(52,211,153,0.3)]' 
+                              : 'text-zinc-500 hover:text-zinc-300'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1">
-                    {songs.map((song, index) => {
+                    {sortedSongs.map((song, index) => {
                       const isActive = currentSong.id === song.id;
                       return (
                         <div 
@@ -733,11 +886,21 @@ export default function App() {
                           }`}
                         >
                           <div className="w-8 text-center text-zinc-500 font-medium">
-                            {isActive && isPlaying ? (
+                            {isActive && (isPlaying || isBuffering) ? (
                               <div className="flex items-end justify-center gap-0.5 h-4">
-                                <motion.div animate={{ height: [4, 12, 4] }} transition={{ repeat: Infinity, duration: 1 }} className="w-1 bg-emerald-400 rounded-t-sm" />
-                                <motion.div animate={{ height: [8, 16, 8] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="w-1 bg-emerald-400 rounded-t-sm" />
-                                <motion.div animate={{ height: [6, 10, 6] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.4 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                {isBuffering ? (
+                                  <motion.div 
+                                    animate={{ rotate: 360 }} 
+                                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                                    className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full"
+                                  />
+                                ) : (
+                                  <>
+                                    <motion.div animate={{ height: [4, 12, 4] }} transition={{ repeat: Infinity, duration: 1 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                    <motion.div animate={{ height: [8, 16, 8] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                    <motion.div animate={{ height: [6, 10, 6] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.4 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                  </>
+                                )}
                               </div>
                             ) : (
                               <span className={isActive ? 'text-emerald-400' : 'group-hover:hidden'}>{index + 1}</span>
@@ -746,7 +909,15 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-4 overflow-hidden">
-                            <img src={song.cover} alt={song.title} className="w-10 h-10 rounded-md object-cover shadow-md" />
+                            <div className="relative shrink-0 w-10 h-10 group/item">
+                              <img src={song.cover} alt={song.title} className="w-full h-full rounded-md object-cover shadow-md transition-transform group-hover/item:scale-110" />
+                              <div className={`absolute inset-0 rounded-md border-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-300 ${
+                                getCoverStatus(song) === 'warning' ? 'border-yellow-400/50 shadow-[0_0_10px_rgba(234,179,8,0.3)]' : 
+                                getCoverStatus(song) === 'user' ? 'border-emerald-400/50 shadow-[0_0_10px_rgba(52,211,153,0.3)]' : 
+                                getCoverStatus(song) === 'custom' ? 'border-blue-400/50 shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 
+                                'border-red-400/50 shadow-[0_0_10px_rgba(239,68,68,0.3)]'
+                              }`} />
+                            </div>
                             <div className="truncate">
                               <div className={`font-medium truncate ${isActive ? 'text-emerald-400' : 'text-zinc-100'}`}>{song.title}</div>
                               <div className="text-sm text-zinc-500 truncate md:hidden">{song.artist}</div>
@@ -842,13 +1013,27 @@ export default function App() {
                                  if (data.results && data.results.length > 0) {
                                    setSuggestedMatches(data.results);
                                    setUploadArtist(prev => prev || data.results[0].artistName);
-                                   setUploadCover(prev => prev || { url: data.results[0].artworkUrl100.replace('100x100bb', '500x500bb') });
+                                   const coverUrl = data.results[0].artworkUrl100.replace('100x100bb', '500x500bb');
                                    setUploadCoverSource('auto');
+                                   
+                                   // Optimization: Start cover upload immediately
+                                   urlToFile(coverUrl, "artwork.jpg").then(async (file) => {
+                                     if (file) {
+                                       const uploaded = await uploadToCloudinary(file);
+                                       if (uploaded) setUploadCover(uploaded);
+                                     }
+                                   });
                                  }
                                } catch (err) { console.error("iTunes metadata sync failed:", err); }
                                
                                const url = await uploadToCloudinary(file);
-                               if (url) { setUploadAudioUrl(url); } else { alert("Failed to upload audio."); }
+                               if (url) { 
+                                 setUploadAudioUrl(url); 
+                                 // Requirement: Add proper loading state only for the uploaded song (not global)
+                                 // We update a local state for this specific upload
+                               } else { 
+                                 alert("Failed to upload audio."); 
+                               }
                                setIsUploading(false);
                             }
                           }} 
@@ -898,11 +1083,19 @@ export default function App() {
                           {suggestedMatches.map((match, i) => (
                             <div 
                               key={i} 
-                              onClick={() => {
+                              onClick={async () => {
                                 setUploadArtist(match.artistName);
                                 setUploadTitle(match.trackName);
-                                setUploadCover({ url: match.artworkUrl100.replace('100x100bb', '500x500bb') });
                                 setUploadCoverSource('suggested');
+                                
+                                // Optimization: Start cover upload immediately
+                                const coverUrl = match.artworkUrl100.replace('100x100bb', '500x500bb');
+                                urlToFile(coverUrl, "artwork.jpg").then(async (file) => {
+                                  if (file) {
+                                     const uploaded = await uploadToCloudinary(file);
+                                     if (uploaded) setUploadCover(uploaded);
+                                  }
+                                });
                               }}
                               className="flex items-center gap-3 p-2 hover:bg-zinc-800/50 rounded-xl cursor-pointer transition-all border border-transparent hover:border-zinc-700/50 group"
                             >
@@ -924,29 +1117,36 @@ export default function App() {
                       <div className="flex items-center justify-between mb-2">
                         <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">Album Image (Auto-Synced or Upload)</label>
                         {uploadCoverSource && (
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                            uploadCoverSource === 'manual' ? 'text-blue-400 bg-blue-400/10 border-blue-400/20' : 
-                            'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
-                          }`}>
-                            {getCoverLabel(uploadCoverSource)}
-                          </span>
+                          <div className="scale-75 origin-right">
+                             {renderCoverLabel({ coverStatus: uploadCoverSource === 'manual' ? 'custom' : 'user', isStatic: true })}
+                          </div>
                         )}
                       </div>
                       <div className="flex items-center gap-4 bg-zinc-950/50 border border-zinc-800 rounded-xl p-3">
                         {uploadCover ? (
-                          <div className="w-16 h-16 shrink-0 rounded-xl overflow-hidden shadow-lg border border-zinc-700 bg-zinc-900">
-                            <img src={uploadCover.url} className="w-full h-full object-cover" alt="Album Cover Preview" />
+                          <div 
+                            className="w-16 h-16 shrink-0 rounded-xl overflow-hidden shadow-lg border border-zinc-700 bg-zinc-900 group/cover relative cursor-pointer"
+                            onClick={() => imageInputRef.current?.click()}
+                          >
+                            <img src={uploadCover.url} className="w-full h-full object-cover group-hover:opacity-40 transition-opacity" alt="Album Cover Preview" />
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
+                               <UploadCloud size={16} className="text-emerald-400" />
+                            </div>
                           </div>
                         ) : (
-                          <div className="w-16 h-16 shrink-0 rounded-xl border-2 border-dashed border-zinc-800 flex items-center justify-center bg-zinc-950">
+                          <div 
+                            className="w-16 h-16 shrink-0 rounded-xl border-2 border-dashed border-zinc-800 flex items-center justify-center bg-zinc-950 cursor-pointer hover:border-emerald-400/50 transition-colors"
+                            onClick={() => imageInputRef.current?.click()}
+                          >
                              <Settings size={20} className="text-zinc-700 animate-spin-slow" />
                           </div>
                         )}
                         <div className="flex-1 min-w-0 overflow-hidden">
                           <input 
+                            ref={imageInputRef}
                             type="file" 
                             accept="image/*"
-                            className="w-full text-sm text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-emerald-400 file:text-black hover:file:bg-emerald-300 cursor-pointer"
+                            className="hidden" 
                             onChange={async (e) => {
                               const file = e.target.files?.[0];
                               if (file) {
@@ -960,8 +1160,15 @@ export default function App() {
                               }
                             }}
                           />
-                          <p className="text-[10px] text-zinc-500 mt-1 truncate">
-                            {uploadCover ? "Ready to sync" : "Select artwork (Square suggested)"}
+                          <button 
+                            type="button" 
+                            onClick={() => imageInputRef.current?.click()}
+                            className="bg-emerald-400 text-black px-4 py-2 rounded-full text-[10px] font-bold hover:bg-emerald-300 transition-all shadow-lg shadow-emerald-400/10 flex items-center gap-2 w-fit mb-1"
+                          >
+                            <UploadCloud size={12} /> {uploadCover ? "Change Artwork" : "Choose Artwork"}
+                          </button>
+                          <p className="text-[10px] text-zinc-500 truncate">
+                            {uploadCover ? "Custom image ready for sanctuary" : "Select artwork (Square suggested)"}
                           </p>
                         </div>
                       </div>
@@ -1164,19 +1371,29 @@ export default function App() {
                                         updateStatus(i, "failed");
                                         continue;
                                       }
+
+                                      let finalBulkCover = song.cover;
+                                      if (song.cover && song.cover.url && !song.cover.public_id) {
+                                        const file = await urlToFile(song.cover.url, "artwork.jpg");
+                                        if (file) {
+                                          const uploaded = await uploadToCloudinary(file);
+                                          if (uploaded) finalBulkCover = uploaded;
+                                        }
+                                      }
                                       
                                       const finalSong = {
                                         id: Date.now() + i,
                                         title: song.title,
                                         artist: song.artist || 'Unknown Artist',
                                         time: audioData.duration ? formatTime(audioData.duration) : '0:00',
-                                        cover: song.cover?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150&h=150&fit=crop&q=80',
-                                        coverPublicId: song.cover?.public_id,
+                                        cover: finalBulkCover?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150&h=150&fit=crop&q=80',
+                                        coverPublicId: finalBulkCover?.public_id,
                                         audioUrl: audioData.url,
                                         audioPublicId: audioData.public_id,
                                         audioBytes: audioData.bytes,
                                         coverBytes: song.cover?.bytes || 0,
                                         fingerprint: song.fingerprint,
+                                        coverStatus: song.cover?.url?.includes('mzstatic.com') ? 'user' : 'system',
                                         liked: false
                                       };
                                       
@@ -1228,7 +1445,14 @@ export default function App() {
                         {songs.map((song) => (
                           <div key={song.id} className="flex items-center justify-between p-2 hover:bg-zinc-800/50 rounded-lg group">
                             <div className="flex items-center gap-3 overflow-hidden">
-                              <img src={song.cover} className="w-10 h-10 rounded-md object-cover shrink-0 shadow-sm" />
+                              <div className="relative shrink-0 w-10 h-10">
+                                <img src={song.cover} className="w-full h-full rounded-md object-cover shrink-0 shadow-sm" />
+                                <div className={`absolute inset-0 rounded-md border-2 pointer-events-none ${
+                                  getCoverStatus(song) === 'warning' ? 'border-yellow-500/30' : 
+                                  getCoverStatus(song) === 'user' ? 'border-green-500/30' : 
+                                  getCoverStatus(song) === 'custom' ? 'border-blue-500/30' : 'border-red-500/30'
+                                }`} />
+                              </div>
                               <div className="truncate">
                                 <p className="text-sm font-medium text-zinc-200 truncate pr-2">{song.title}</p>
                                 <p className="text-xs text-zinc-500 truncate">{song.artist}</p>
@@ -1354,11 +1578,21 @@ export default function App() {
                           }`}
                         >
                           <div className="w-8 text-center text-zinc-500 font-medium">
-                            {isActive && isPlaying ? (
+                            {isActive && (isPlaying || isBuffering) ? (
                               <div className="flex items-end justify-center gap-0.5 h-4">
-                                <motion.div animate={{ height: [4, 12, 4] }} transition={{ repeat: Infinity, duration: 1 }} className="w-1 bg-emerald-400 rounded-t-sm" />
-                                <motion.div animate={{ height: [8, 16, 8] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="w-1 bg-emerald-400 rounded-t-sm" />
-                                <motion.div animate={{ height: [6, 10, 6] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.4 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                {isBuffering ? (
+                                  <motion.div 
+                                    animate={{ rotate: 360 }} 
+                                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                                    className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full"
+                                  />
+                                ) : (
+                                  <>
+                                    <motion.div animate={{ height: [4, 12, 4] }} transition={{ repeat: Infinity, duration: 1 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                    <motion.div animate={{ height: [8, 16, 8] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                    <motion.div animate={{ height: [6, 10, 6] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.4 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                  </>
+                                )}
                               </div>
                             ) : (
                               <span className={isActive ? 'text-emerald-400' : 'group-hover:hidden'}>{index + 1}</span>
@@ -1367,7 +1601,15 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-4 overflow-hidden">
-                            <img src={song.cover} alt={song.title} className="w-10 h-10 rounded-md object-cover shadow-md" />
+                            <div className="relative shrink-0 w-10 h-10 group/item">
+                              <img src={song.cover} alt={song.title} className="w-full h-full rounded-md object-cover shadow-md transition-transform group-hover/item:scale-110" />
+                              <div className={`absolute inset-0 rounded-md border-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-300 ${
+                                getCoverStatus(song) === 'warning' ? 'border-yellow-400/50 shadow-[0_0_10px_rgba(234,179,8,0.3)]' : 
+                                getCoverStatus(song) === 'user' ? 'border-emerald-400/50 shadow-[0_0_10px_rgba(52,211,153,0.3)]' : 
+                                getCoverStatus(song) === 'custom' ? 'border-blue-400/50 shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 
+                                'border-red-400/50 shadow-[0_0_10px_rgba(239,68,68,0.3)]'
+                              }`} />
+                            </div>
                             <div className="truncate">
                               <div className={`font-medium truncate ${isActive ? 'text-emerald-400' : 'text-zinc-100'}`}>{song.title}</div>
                               <div className="text-sm text-zinc-500 truncate md:hidden">{song.artist}</div>
@@ -1867,10 +2109,13 @@ export default function App() {
       <audio 
         ref={audioRef} 
         src={currentSong.audioUrl || ''} 
+        preload="metadata"
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
+        onWaiting={handleWaiting}
+        onPlaying={handlePlaying}
+        onCanPlay={handleCanPlay}
         onEnded={() => handleNextSong(true)}
-        autoPlay={isPlaying}
       />
     </div>
   );
