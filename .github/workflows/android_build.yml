@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout Code
@@ -49,27 +47,30 @@ jobs:
         run: |
           npx cap sync android
 
-      - name: Build Android APK
+      - name: Build Android Release
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Sign APK
-        id: sign_app
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: android/app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_CONTENT }}
-          alias: leafplayer
-          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_CONTENT }}" | base64 -d > release.jks
 
-      - name: Rename APK
-        run: mv ${{steps.sign_app.outputs.signedReleaseFile}} android/app/build/outputs/apk/release/LeafPlayer-Release.apk
+      - name: Sign APK
+        run: |
+          # Find Android Build Tools
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          echo "Using Build Tools from: $BUILD_TOOLS_DIR"
+          
+          # Align the APK
+          $BUILD_TOOLS_DIR/zipalign -v 4 android/app/build/outputs/apk/release/app-release-unsigned.apk LeafPlayer-Aligned.apk
+          
+          # Sign the APK
+          $BUILD_TOOLS_DIR/apksigner sign --ks release.jks --ks-pass pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} --ks-key-alias leafplayer --key-pass pass:${{ secrets.ANDROID_KEY_PASSWORD }} --out LeafPlayer-Release.apk LeafPlayer-Aligned.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: LeafPlayer-Release
-          path: android/app/build/outputs/apk/release/LeafPlayer-Release.apk
+          path: LeafPlayer-Release.apk
