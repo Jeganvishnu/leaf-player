@@ -4,7 +4,7 @@ import {
   Home, Search, Library, Heart, PlusCircle, 
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, 
   Volume2, VolumeX, ListMusic, MoreHorizontal, Maximize2, 
-  Trash2, Settings, ShieldCheck, UploadCloud, Share2, BarChart, X
+  Trash2, Settings, ShieldCheck, UploadCloud, Share2, BarChart, X, Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { initializeApp } from "firebase/app";
@@ -116,9 +116,47 @@ export default function App() {
   const [currentUploadingIndex, setCurrentUploadingIndex] = useState<number | null>(null);
   const [globalStatus, setGlobalStatus] = useState<string | null>(null);
   const [sortOption, setSortOption] = useState<'default' | 'az' | 'recent' | 'most'>('default');
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isPlayerVisible, setIsPlayerVisible] = useState(true);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [isForcedOffline, setIsForcedOffline] = useState(false);
+  const [cachedSongs, setCachedSongs] = useState<Set<string>>(new Set());
   const [songLoadingStates, setSongLoadingStates] = useState<Record<number, boolean>>({});
+  const [sleepTimer, setSleepTimer] = useState<number | null>(null);
+  const [isSleepTimerMenuOpen, setIsSleepTimerMenuOpen] = useState(false);
+
+  useEffect(() => {
+    let interval: any;
+    if (sleepTimer !== null && sleepTimer > 0) {
+      interval = setInterval(() => {
+        setSleepTimer(prev => (prev && prev > 0) ? prev - 1 : 0);
+      }, 1000);
+    } else if (sleepTimer === 0) {
+      setIsPlaying(false);
+      setSleepTimer(null);
+      if (audioRef.current) audioRef.current.pause();
+    }
+    return () => clearInterval(interval);
+  }, [sleepTimer]);
+
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then(() => {
+        console.log("Service Worker Active");
+      });
+    }
+
+    // Check pre-cached songs
+    const checkCache = async () => {
+      if ('caches' in window) {
+        const cache = await caches.open('leaf-player-audio-v1');
+        const keys = await cache.keys();
+        const urls = new Set(keys.map(k => k.url));
+        setCachedSongs(urls);
+      }
+    };
+    checkCache();
+  }, [songs]);
 
   const updateProgress = (index: number, value: number) => {
     setProgressList(prev => {
@@ -138,6 +176,9 @@ export default function App() {
 
   const sortedSongs = useMemo(() => {
     let result = [...songs];
+    if (isForcedOffline) {
+      result = result.filter(s => cachedSongs.has(s.audioUrl) || s.id === 0);
+    }
     if (sortOption === 'az') {
       result.sort((a, b) => a.title.localeCompare(b.title));
     } else if (sortOption === 'recent') {
@@ -780,34 +821,47 @@ export default function App() {
         <header className="sticky top-0 h-20 bg-[#0a0a0a]/70 backdrop-blur-xl border-b border-zinc-800/30 z-30 flex items-center justify-between px-6 md:px-10 shrink-0">
           <div className="flex items-center gap-6 pointer-events-auto">
             {/* Mobile Logo */}
-            <div className="md:hidden flex items-center gap-2">
+            <div className="md:hidden flex items-center gap-3">
               <div className="w-6 h-6 rounded-full bg-emerald-400 flex items-center justify-center">
                 <div className="w-2 h-2 bg-black rounded-full" />
               </div>
-              <span className="text-xl font-bold tracking-tight text-emerald-400">Leaf Player</span>
-              <span className="text-[8px] sm:text-[10px] text-zinc-500 font-medium ml-1 mt-1 opacity-80 hover:text-emerald-400 hover:drop-shadow-[0_0_8px_rgba(52,211,153,0.5)] transition-all duration-300 cursor-default select-none truncate max-w-[120px]">
-                Stream it. Support it. Don’t steal it
-              </span>
+              <div>
+                <span className="text-xl font-bold tracking-tight text-emerald-400">Leaf Player</span>
+                <span className="block text-[7px] text-zinc-500 font-medium opacity-80 hover:text-emerald-400 transition-all duration-300 cursor-default select-none truncate">
+                  Stream it. Support it. Don’t steal it
+                </span>
+              </div>
             </div>
-            
           </div>
 
-          <div className="flex items-center gap-8 pointer-events-auto">
-            <span className="hidden lg:block text-zinc-500 text-sm font-semibold tracking-wide transition-all duration-300 hover:text-emerald-400 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.6)] cursor-default select-none">
-              Stream it. Support it. Don’t steal it
-            </span>
-            <div className="hidden md:flex items-center bg-zinc-900/80 border border-zinc-800 rounded-full px-4 py-2 w-64 focus-within:border-emerald-500/50 transition-colors shadow-inner">
-              <Search size={16} className="text-zinc-400 mr-2" />
-              <input 
-                type="text" 
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  if (currentView !== 'search') setCurrentView('search');
-                }}
-                placeholder="Search library..." 
-                className="bg-transparent border-none outline-none text-sm w-full placeholder:text-zinc-500"
-              />
+          <div className="flex items-center gap-4 md:gap-8 pointer-events-auto">
+            {/* Online/Offline Toggle */}
+            <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-full p-1 cursor-pointer select-none" onClick={() => setIsForcedOffline(!isForcedOffline)}>
+              <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all duration-300 ${!isForcedOffline ? 'bg-emerald-400 text-black shadow-[0_0_10px_rgba(52,211,153,0.3)]' : 'text-zinc-500 hover:text-zinc-300'}`}>
+                Online
+              </div>
+              <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all duration-300 ${isForcedOffline ? 'bg-zinc-100 text-black shadow-[0_0_10px_rgba(255,255,255,0.2)]' : 'text-zinc-500 hover:text-zinc-300'}`}>
+                Offline
+              </div>
+            </div>
+
+            <div className="hidden md:flex items-center gap-4">
+              <span className="hidden xl:block text-zinc-500 text-[10px] font-bold tracking-widest uppercase opacity-50 hover:opacity-100 transition-opacity cursor-default select-none group-hover:text-emerald-400">
+                Stream it. Support it. Don’t steal it
+              </span>
+              <div className="flex items-center bg-zinc-900/80 border border-zinc-800 rounded-full px-4 py-2 w-64 focus-within:border-emerald-500/50 transition-colors shadow-inner">
+                <Search size={16} className="text-zinc-400 mr-2" />
+                <input 
+                  type="text" 
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (currentView !== 'search') setCurrentView('search');
+                  }}
+                  placeholder="Search library..." 
+                  className="bg-transparent border-none outline-none text-sm w-full placeholder:text-zinc-500"
+                />
+              </div>
             </div>
           </div>
         </header>
@@ -853,25 +907,63 @@ export default function App() {
                 <section>
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-bold tracking-tight">Your Tracks</h2>
-                    <div className="flex items-center gap-2 bg-zinc-900/50 border border-zinc-800/50 rounded-lg p-1">
-                      {[
-                        { id: 'default', label: 'Default' },
-                        { id: 'az', label: 'A-Z' },
-                        { id: 'recent', label: 'New' },
-                        { id: 'most', label: 'Top' }
-                      ].map(opt => (
-                        <button
-                          key={opt.id}
-                          onClick={() => setSortOption(opt.id as any)}
-                          className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${
-                            sortOption === opt.id 
-                              ? 'bg-emerald-400 text-black shadow-[0_0_10px_rgba(52,211,153,0.3)]' 
-                              : 'text-zinc-500 hover:text-zinc-300'
-                          }`}
+                    <div className="relative">
+                      <button 
+                        onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
+                        className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2 hover:bg-zinc-800 transition-all shadow-lg group"
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">
+                          {([
+                            { id: 'default', label: 'Default' },
+                            { id: 'az', label: 'A-Z' },
+                            { id: 'recent', label: 'New' },
+                            { id: 'most', label: 'Top' }
+                          ].find(o => o.id === sortOption)?.label || 'Default')}
+                        </span>
+                        <motion.div
+                          animate={{ rotate: isSortMenuOpen ? 180 : 0 }}
+                          transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
                         >
-                          {opt.label}
-                        </button>
-                      ))}
+                          <PlusCircle size={14} className={`text-zinc-500 group-hover:text-emerald-400 transition-colors ${isSortMenuOpen ? 'rotate-45' : ''}`} />
+                        </motion.div>
+                      </button>
+
+                      <AnimatePresence>
+                        {isSortMenuOpen && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
+                            className="absolute top-full right-0 mt-2 w-36 bg-[#121212] border border-zinc-800/80 rounded-2xl p-2 shadow-2xl z-50 backdrop-blur-xl"
+                          >
+                            {[
+                              { id: 'default', label: 'Default' },
+                              { id: 'az', label: 'A-Z' },
+                              { id: 'recent', label: 'New' },
+                              { id: 'most', label: 'Top' }
+                            ].map(opt => (
+                              <button
+                                key={opt.id}
+                                onClick={() => {
+                                  setSortOption(opt.id as any);
+                                  setIsSortMenuOpen(false);
+                                }}
+                                className={`w-full text-left px-4 py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-between group/opt ${
+                                  sortOption === opt.id 
+                                    ? 'bg-emerald-400/10 text-emerald-400' 
+                                    : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50'
+                                }`}
+                              >
+                                {opt.label}
+                                {sortOption === opt.id && (
+                                  <motion.div layoutId="active-tick" className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                                )}
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -926,8 +1018,13 @@ export default function App() {
                           
                           <div className="hidden md:block text-sm text-zinc-400 truncate">{song.artist}</div>
                           
-                          <div className="w-16 text-right flex items-center justify-end gap-4">
-                            <Heart size={16} className={song.liked ? 'text-emerald-400 fill-emerald-400' : 'text-zinc-500 hover:text-zinc-300 opacity-0 group-hover:opacity-100'} />
+                          <div className="w-16 text-right flex items-center justify-end gap-3 translate-x-1">
+                            {cachedSongs.has(song.audioUrl) && (
+                              <div className="w-5 h-5 rounded-full bg-emerald-400/10 flex items-center justify-center border border-emerald-400/20 group-hover:scale-110 transition-transform">
+                                <ShieldCheck size={10} className="text-emerald-400" />
+                              </div>
+                            )}
+                            <Heart size={16} className={song.liked ? 'text-emerald-400 fill-emerald-400' : 'text-zinc-500 hover:text-zinc-300 opacity-0 group-hover:opacity-100'} onClick={(e) => toggleLike(e, song.id)} />
                             <span className="text-sm text-zinc-500">{song.time}</span>
                           </div>
                         </div>
@@ -1941,6 +2038,40 @@ export default function App() {
                  {volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                </button>
             </div>
+            <div className="relative">
+              <button 
+                onClick={(e) => { e.stopPropagation(); setIsSleepTimerMenuOpen(!isSleepTimerMenuOpen); }} 
+                className={`hover:text-zinc-100 transition-colors shrink-0 flex items-center gap-1 ${sleepTimer ? 'text-emerald-400' : ''}`}
+              >
+                <Clock size={18} />
+                {sleepTimer && <span className="text-[10px] font-bold">{Math.ceil(sleepTimer / 60)}m</span>}
+              </button>
+              <AnimatePresence>
+                {isSleepTimerMenuOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute bottom-full right-0 mb-4 w-32 bg-zinc-900 border border-zinc-800 rounded-2xl p-2 shadow-2xl z-50 overflow-hidden"
+                  >
+                    {[
+                      { label: 'Off', val: null },
+                      { label: '15 Min', val: 15 * 60 },
+                      { label: '30 Min', val: 30 * 60 },
+                      { label: '60 Min', val: 60 * 60 }
+                    ].map(t => (
+                      <button 
+                        key={t.label}
+                        onClick={() => { setSleepTimer(t.val); setIsSleepTimerMenuOpen(false); }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-[10px] font-bold uppercase transition-colors hover:bg-zinc-800 text-zinc-400 hover:text-white"
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
             <button onClick={(e) => e.stopPropagation()} className="hover:text-zinc-100 transition-colors shrink-0"><ListMusic size={18} /></button>
             <button onClick={(e) => { e.stopPropagation(); handleExpandMobilePlayer(); }} className="hover:text-zinc-100 transition-colors shrink-0"><Maximize2 size={18} /></button>
           </div>
@@ -2094,7 +2225,41 @@ export default function App() {
                     <Share2 size={16} /> Share
                   </button>
                   <div className="flex items-center gap-6">
-                    <button><ListMusic size={20} className="hover:text-zinc-100 transition-colors" /></button>
+                    <div className="flex items-center gap-6 relative">
+                      <button 
+                        onClick={() => setIsSleepTimerMenuOpen(!isSleepTimerMenuOpen)}
+                        className={`hover:text-zinc-100 transition-colors flex items-center gap-1 ${sleepTimer ? 'text-emerald-400' : ''}`}
+                      >
+                        <Clock size={20} />
+                        {sleepTimer && <span className="text-xs font-bold">{Math.ceil(sleepTimer / 60)}m</span>}
+                      </button>
+                      <AnimatePresence>
+                        {isSleepTimerMenuOpen && (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.9 }}
+                            className="absolute bottom-full right-0 mb-4 w-32 bg-zinc-900 border border-zinc-800 rounded-2xl p-2 shadow-2xl z-50 overflow-hidden"
+                          >
+                            {[
+                              { label: 'Off', val: null },
+                              { label: '15 Min', val: 15 * 60 },
+                              { label: '30 Min', val: 30 * 60 },
+                              { label: '60 Min', val: 60 * 60 }
+                            ].map(t => (
+                              <button 
+                                key={t.label}
+                                onClick={() => { setSleepTimer(t.val); setIsSleepTimerMenuOpen(false); }}
+                                className="w-full text-left px-3 py-2 rounded-xl text-[10px] font-bold uppercase transition-colors hover:bg-zinc-800 text-zinc-400 hover:text-white"
+                              >
+                                {t.label}
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                      <button><ListMusic size={20} className="hover:text-zinc-100 transition-colors" /></button>
+                    </div>
                     <button onClick={toggleMute} className="outline-none hover:text-zinc-100 transition-colors">
                       {volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
                     </button>
