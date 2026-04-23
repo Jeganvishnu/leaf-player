@@ -639,13 +639,26 @@ export default function App() {
         audioRef.current.currentTime = parseFloat(savedTime);
       }
       setIsPlaying(true);
+      if (audioRef.current) audioRef.current.play().catch(() => {});
       return;
     }
 
     // Optimization: Don't reload if url is the same
     if (song.audioUrl === currentSong.audioUrl && currentSong.id !== 0) {
       setIsPlaying(true);
+      if (audioRef.current) audioRef.current.play().catch(() => {});
       return;
+    }
+
+    // DIRECT AUDIO MANIPULATION FOR MOBILE BACKGROUND PLAYBACK
+    // Setting src and playing synchronously before React state catches up
+    // prevents iOS/Android from pausing the background JavaScript thread.
+    if (audioRef.current && song.audioUrl) {
+      if (audioRef.current.src !== song.audioUrl) {
+        audioRef.current.src = song.audioUrl;
+        audioRef.current.load();
+      }
+      audioRef.current.play().catch(() => {});
     }
 
     // Reset current time for new song
@@ -723,28 +736,11 @@ export default function App() {
     }
   };
 
-  const handleNextSong = async (isAuto = false) => {
+  const handleNextSong = (isAuto = false) => {
     if (isAuto && isRepeat && audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => {});
       return;
-    }
-
-    if (!isShuffle && currentSong.id !== 0 && API_URL) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 200); // 200ms strict threshold
-        const res = await fetch(`${API_URL}/recommendations/${currentSong.id}`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        const data = await res.json();
-        if (data.recommended_song_id) {
-           const recommendedSong = songs.find(s => String(s.id) === String(data.recommended_song_id));
-           if (recommendedSong) {
-             playSong(recommendedSong);
-             return;
-           }
-        }
-      } catch (e) { }
     }
 
     let nextIndex = songs.findIndex(s => s.id === currentSong.id) + 1;
@@ -755,6 +751,20 @@ export default function App() {
     }
     const nextSong = songs[nextIndex];
     if (nextSong) playSong(nextSong);
+    
+    // Fire recommendation request in background after playback starts
+    if (!isShuffle && currentSong.id !== 0 && API_URL && !isAuto) {
+      fetch(`${API_URL}/recommendations/${currentSong.id}`)
+        .then(res => res.json())
+        .then(data => {
+           if (data.recommended_song_id) {
+             const recommendedSong = songs.find(s => String(s.id) === String(data.recommended_song_id));
+             if (recommendedSong && currentSong.id !== recommendedSong.id) {
+               playSong(recommendedSong);
+             }
+           }
+        }).catch(() => {});
+    }
   };
 
   const handlePrevSong = () => {
