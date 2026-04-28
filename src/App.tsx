@@ -743,13 +743,14 @@ export default function App() {
       return;
     }
 
-    let nextIndex = songs.findIndex(s => s.id === currentSong.id) + 1;
+    const playList = sortOption === 'az' ? sortedSongs : songs;
+    let nextIndex = playList.findIndex(s => s.id === currentSong.id) + 1;
     if (isShuffle) {
-      nextIndex = Math.floor(Math.random() * songs.length);
-    } else if (nextIndex >= songs.length) {
+      nextIndex = Math.floor(Math.random() * playList.length);
+    } else if (nextIndex >= playList.length) {
       nextIndex = 0;
     }
-    const nextSong = songs[nextIndex];
+    const nextSong = playList[nextIndex];
     if (nextSong) playSong(nextSong);
     
     // Fire recommendation request in background after playback starts
@@ -758,7 +759,7 @@ export default function App() {
         .then(res => res.json())
         .then(data => {
            if (data.recommended_song_id) {
-             const recommendedSong = songs.find(s => String(s.id) === String(data.recommended_song_id));
+             const recommendedSong = playList.find(s => String(s.id) === String(data.recommended_song_id));
              if (recommendedSong && currentSong.id !== recommendedSong.id) {
                playSong(recommendedSong);
              }
@@ -768,9 +769,10 @@ export default function App() {
   };
 
   const handlePrevSong = () => {
-    let prevIndex = songs.findIndex(s => s.id === currentSong.id) - 1;
-    if (prevIndex < 0) prevIndex = songs.length - 1;
-    const prevSong = songs[prevIndex];
+    const playList = sortOption === 'az' ? sortedSongs : songs;
+    let prevIndex = playList.findIndex(s => s.id === currentSong.id) - 1;
+    if (prevIndex < 0) prevIndex = playList.length - 1;
+    const prevSong = playList[prevIndex];
     if (prevSong) playSong(prevSong);
   };
 
@@ -925,9 +927,7 @@ export default function App() {
                         <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">
                           {([
                             { id: 'default', label: 'Default' },
-                            { id: 'az', label: 'A-Z' },
-                            { id: 'recent', label: 'New' },
-                            { id: 'most', label: 'Top' }
+                            { id: 'az', label: 'A-Z' }
                           ].find(o => o.id === sortOption)?.label || 'Default')}
                         </span>
                         <motion.div
@@ -949,9 +949,7 @@ export default function App() {
                           >
                             {[
                               { id: 'default', label: 'Default' },
-                              { id: 'az', label: 'A-Z' },
-                              { id: 'recent', label: 'New' },
-                              { id: 'most', label: 'Top' }
+                              { id: 'az', label: 'A-Z' }
                             ].map(opt => (
                               <button
                                 key={opt.id}
