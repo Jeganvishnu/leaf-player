@@ -666,6 +666,12 @@ export default function App() {
     setCurrentSong(song);
     setIsPlaying(true);
     
+    if (song.firebaseId && song.id !== 0) {
+      updateDoc(doc(db, "songs", song.firebaseId), {
+        playCount: (song.playCount || 0) + 1
+      }).catch((e) => console.error("Error updating playCount:", e));
+    }
+    
     setRecentlyPlayed(prev => {
       const filtered = prev.filter(s => s.id !== song.id);
       return [song, ...filtered].slice(0, 5);
@@ -824,6 +830,7 @@ export default function App() {
           <SidebarItem icon={ListMusic} label="Recently Uploaded" active={currentView === 'recent'} onClick={() => setCurrentView('recent')} />
           <SidebarItem icon={Search} label="Search" active={currentView === 'search'} onClick={() => setCurrentView('search')} />
           <SidebarItem icon={ListMusic} label="Library" active={currentView === 'library'} onClick={() => setCurrentView('library')} />
+          <SidebarItem icon={BarChart} label="MPS" active={currentView === 'mps'} onClick={() => setCurrentView('mps')} />
           <SidebarItem icon={ShieldCheck} label="Admin" active={currentView === 'dashboard'} onClick={() => setCurrentView('dashboard')} />
         </div>
 
@@ -1940,6 +1947,180 @@ export default function App() {
                 )}
               </motion.div>
             )}
+
+            {/* MPS Dashboard View */}
+            {currentView === 'mps' && (
+              <motion.div 
+                key="mps" 
+                initial={{ opacity: 0, y: 10 }} 
+                animate={{ opacity: 1, y: 0 }} 
+                exit={{ opacity: 0, y: -10 }} 
+                className="flex flex-col gap-8 md:gap-12"
+              >
+                <div>
+                  <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 flex items-center gap-3">
+                    <BarChart className="text-emerald-400" size={36} /> Most Played Songs
+                  </h1>
+                  <p className="text-zinc-500 text-sm md:text-base">
+                    Streaming stats and data visualization of your most played tracks.
+                  </p>
+                </div>
+
+                {/* Top 5 premium data visualization bar chart */}
+                <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 md:p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden group">
+                  <div className="absolute -right-24 -top-24 w-48 h-48 bg-emerald-400/5 rounded-full blur-3xl pointer-events-none group-hover:bg-emerald-400/10 transition-colors duration-500" />
+                  
+                  <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-2">
+                    <div>
+                      <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" /> Top 5 Sanctuary Hits
+                      </h2>
+                      <p className="text-xs text-zinc-500 mt-1">Visualization of the top tracks based on play count</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest bg-emerald-400/10 border border-emerald-400/20 px-3 py-1 rounded-full w-fit">
+                      Real-Time Synced
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-6">
+                    {(() => {
+                      const topSongs = [...songs]
+                        .filter(s => s.id !== 0)
+                        .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
+                        .slice(0, 5);
+
+                      const maxPlays = topSongs[0]?.playCount || 1;
+
+                      if (topSongs.length === 0 || maxPlays === 0) {
+                        return (
+                          <div className="text-center py-12 text-zinc-500">
+                            <BarChart size={48} className="mx-auto text-zinc-800 mb-3" />
+                            <p>No listening history recorded yet.</p>
+                            <p className="text-xs text-zinc-600 mt-1">Play your favorite songs from the homepage to generate stats.</p>
+                          </div>
+                        );
+                      }
+
+                      return topSongs.map((song, idx) => {
+                        const playCount = song.playCount || 0;
+                        const percentage = maxPlays > 0 ? (playCount / maxPlays) * 100 : 0;
+                        const isActive = currentSong.id === song.id;
+
+                        return (
+                          <div key={`chart-${song.id}`} className="flex flex-col gap-2 group/bar">
+                            <div className="flex items-center justify-between text-xs md:text-sm">
+                              <div className="flex items-center gap-3 overflow-hidden flex-1 mr-4">
+                                <span className="font-bold font-mono text-zinc-600 group-hover/bar:text-emerald-400 transition-colors w-4">
+                                  #{idx + 1}
+                                </span>
+                                <img src={song.cover} alt={song.title} className="w-8 h-8 rounded object-cover shadow" />
+                                <span className={`font-semibold truncate ${isActive ? 'text-emerald-400' : 'text-zinc-200'}`}>
+                                  {song.title}
+                                </span>
+                                <span className="text-zinc-500 text-xs truncate hidden md:inline">
+                                  • {song.artist}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="font-mono font-bold text-zinc-100">{playCount}</span>
+                                <span className="text-zinc-500 text-xs uppercase tracking-wider">{playCount === 1 ? 'play' : 'plays'}</span>
+                              </div>
+                            </div>
+
+                            <div 
+                              className="h-3 bg-zinc-950/60 rounded-full overflow-hidden border border-zinc-800/40 relative cursor-pointer"
+                              onClick={() => playSong(song)}
+                              title={`Play ${song.title}`}
+                            >
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${percentage}%` }}
+                                transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: idx * 0.1 }}
+                                className="h-full rounded-full transition-all duration-300 relative"
+                                style={{
+                                  background: 'linear-gradient(90deg, rgba(16, 185, 129, 0.4) 0%, rgba(52, 211, 153, 0.9) 100%)',
+                                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1)'
+                                }}
+                              >
+                                <div className="absolute right-0 top-0 bottom-0 w-2 bg-white/20 animate-pulse rounded-r-full" />
+                              </motion.div>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
+                {/* All Tracks Stats List */}
+                <div className="flex flex-col gap-6">
+                  <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                    <ListMusic className="text-emerald-400" size={24} /> Full Streaming Stats
+                  </h2>
+
+                  <div className="flex flex-col gap-1">
+                    {(() => {
+                      const sortedByPlay = [...songs]
+                        .filter(s => s.id !== 0)
+                        .sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
+
+                      if (sortedByPlay.length === 0) {
+                        return (
+                          <div className="text-center py-12 text-zinc-500 bg-zinc-900/20 border border-zinc-800/40 rounded-3xl">
+                            <p>No tracks in the sanctuary library.</p>
+                          </div>
+                        );
+                      }
+
+                      return sortedByPlay.map((song, index) => {
+                        const isActive = currentSong.id === song.id;
+                        const playCount = song.playCount || 0;
+
+                        return (
+                          <div 
+                            key={`mps-list-${song.id}`}
+                            onClick={() => playSong(song)}
+                            className={`grid grid-cols-[auto_1fr_auto] md:grid-cols-[auto_1fr_1fr_auto] gap-4 items-center px-4 py-3 rounded-xl cursor-pointer transition-colors group ${
+                              isActive ? 'bg-emerald-400/10 border border-emerald-400/20' : 'hover:bg-zinc-800/50 border border-transparent'
+                            }`}
+                          >
+                            <div className="w-8 text-center text-zinc-500 font-medium">
+                              {isActive && isPlaying ? (
+                                <div className="flex items-end justify-center gap-0.5 h-4">
+                                  <motion.div animate={{ height: [4, 12, 4] }} transition={{ repeat: Infinity, duration: 1 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                  <motion.div animate={{ height: [8, 16, 8] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                  <motion.div animate={{ height: [6, 10, 6] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.4 }} className="w-1 bg-emerald-400 rounded-t-sm" />
+                                </div>
+                              ) : (
+                                <span className={isActive ? 'text-emerald-400' : 'group-hover:hidden font-mono'}>{index + 1}</span>
+                              )}
+                              {!isActive && <Play size={16} className="hidden group-hover:inline-block text-zinc-100" fill="currentColor" />}
+                            </div>
+
+                            <div className="flex items-center gap-4 overflow-hidden">
+                              <img src={song.cover} alt={song.title} className="w-10 h-10 rounded-md object-cover shadow-md" />
+                              <div className="truncate">
+                                <div className={`font-medium truncate ${isActive ? 'text-emerald-400' : 'text-zinc-100'}`}>{song.title}</div>
+                                <div className="text-sm text-zinc-500 truncate md:hidden">{song.artist}</div>
+                              </div>
+                            </div>
+
+                            <div className="hidden md:block text-sm text-zinc-400 truncate">{song.artist}</div>
+
+                            <div className="w-24 text-right flex items-center justify-end gap-4 shrink-0">
+                              <span className="font-mono text-xs text-emerald-400 font-bold bg-emerald-400/5 border border-emerald-400/10 px-2 py-0.5 rounded">
+                                {playCount} {playCount === 1 ? 'play' : 'plays'}
+                              </span>
+                              <Heart size={16} onClick={(e) => toggleLike(e, song.id)} className={song.liked ? 'text-emerald-400 fill-emerald-400' : 'text-zinc-500 hover:text-zinc-300 opacity-0 group-hover:opacity-100'} />
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </AnimatePresence>
         </div>
       </main>
@@ -2144,6 +2325,10 @@ export default function App() {
         <button onClick={() => setCurrentView('library')} className={`flex flex-col items-center gap-1 ${currentView === 'library' ? 'text-emerald-400' : 'text-zinc-500'}`}>
           <Library size={22} />
           <span className="text-[10px] font-medium">Library</span>
+        </button>
+        <button onClick={() => setCurrentView('mps')} className={`flex flex-col items-center gap-1 ${currentView === 'mps' ? 'text-emerald-400' : 'text-zinc-500'}`}>
+          <BarChart size={22} />
+          <span className="text-[10px] font-medium">MPS</span>
         </button>
         <button onClick={() => setCurrentView('dashboard')} className={`flex flex-col items-center gap-1 ${currentView === 'dashboard' ? 'text-emerald-400' : 'text-zinc-500'}`}>
           <ShieldCheck size={22} />
