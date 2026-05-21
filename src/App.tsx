@@ -743,7 +743,7 @@ export default function App() {
       return;
     }
 
-    const playList = sortOption === 'az' ? sortedSongs : songs;
+    const playList = (sortOption === 'az' || isForcedOffline) ? sortedSongs : songs;
     let nextIndex = playList.findIndex(s => s.id === currentSong.id) + 1;
     if (isShuffle) {
       nextIndex = Math.floor(Math.random() * playList.length);
@@ -769,11 +769,25 @@ export default function App() {
   };
 
   const handlePrevSong = () => {
-    const playList = sortOption === 'az' ? sortedSongs : songs;
+    const playList = (sortOption === 'az' || isForcedOffline) ? sortedSongs : songs;
     let prevIndex = playList.findIndex(s => s.id === currentSong.id) - 1;
     if (prevIndex < 0) prevIndex = playList.length - 1;
     const prevSong = playList[prevIndex];
     if (prevSong) playSong(prevSong);
+  };
+
+  const handleSwapOrLoop = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!isShuffle && !isRepeat) {
+      setIsShuffle(true);
+      setIsRepeat(false);
+    } else if (isShuffle && !isRepeat) {
+      setIsShuffle(false);
+      setIsRepeat(true);
+    } else {
+      setIsShuffle(false);
+      setIsRepeat(false);
+    }
   };
 
   useEffect(() => {
@@ -884,13 +898,13 @@ export default function App() {
             {currentView === 'home' && (
               <motion.div key="home" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="flex flex-col gap-10">
                 {/* Continue Listening */}
-                {recentlyPlayed.length > 0 && (
+                {((isForcedOffline ? recentlyPlayed.filter(s => cachedSongs.has(s.audioUrl)) : recentlyPlayed).length > 0) && (
                   <section>
                     <div className="flex items-center justify-between mb-6">
                       <h2 className="text-2xl font-bold tracking-tight">Continue Listening</h2>
                     </div>
                     <div className="horizontal-scroll-section">
-                      {recentlyPlayed.map((album) => (
+                      {(isForcedOffline ? recentlyPlayed.filter(s => cachedSongs.has(s.audioUrl)) : recentlyPlayed).map((album) => (
                         <div 
                           key={album.id} 
                           className="neo-card group cursor-pointer shrink-0 w-48 p-3" 
@@ -1670,9 +1684,9 @@ export default function App() {
                   <p className="text-zinc-500 mb-8">Tracks recently added to the platform by administrators.</p>
                 </div>
                 
-                {songs.length > 0 ? (
+                {(isForcedOffline ? sortedSongs : songs).length > 0 ? (
                   <div className="flex flex-col gap-1">
-                    {songs.map((song, index) => {
+                    {(isForcedOffline ? sortedSongs : songs).map((song, index) => {
                       const isActive = currentSong.id === song.id;
                       return (
                         <div 
@@ -1765,7 +1779,7 @@ export default function App() {
                 <div className="flex flex-col gap-1">
                   {libraryTab === 'liked' && (
                     <>
-                      {songs.filter(s => s.liked).map((song, index) => {
+                      {(isForcedOffline ? sortedSongs : songs).filter(s => s.liked).map((song, index) => {
                         const isActive = currentSong.id === song.id;
                         return (
                           <div 
@@ -1805,7 +1819,7 @@ export default function App() {
                           </div>
                         );
                       })}
-                      {songs.filter(s => s.liked).length === 0 && (
+                      {(isForcedOffline ? sortedSongs : songs).filter(s => s.liked).length === 0 && (
                         <div className="text-center py-20 text-zinc-500">
                           <Heart size={48} className="mx-auto text-zinc-800 mb-4" />
                           <p className="text-lg font-medium text-zinc-400">No Liked Songs Yet</p>
@@ -1875,8 +1889,8 @@ export default function App() {
                     <h2 className="text-2xl font-bold tracking-tight">Top Results for "{searchQuery}"</h2>
                     
                     <div className="flex flex-col gap-1">
-                      {songs.filter(s => s.id !== 0 && (s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.artist.toLowerCase().includes(searchQuery.toLowerCase()))).length > 0 ? (
-                        songs.filter(s => s.id !== 0 && (s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.artist.toLowerCase().includes(searchQuery.toLowerCase()))).map((song, index) => {
+                      {(isForcedOffline ? sortedSongs : songs).filter(s => s.id !== 0 && (s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.artist.toLowerCase().includes(searchQuery.toLowerCase()))).length > 0 ? (
+                        (isForcedOffline ? sortedSongs : songs).filter(s => s.id !== 0 && (s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.artist.toLowerCase().includes(searchQuery.toLowerCase()))).map((song, index) => {
                           const isActive = currentSong.id === song.id;
                           return (
                             <div 
@@ -1960,10 +1974,17 @@ export default function App() {
           <div className="hidden md:flex flex-col items-center justify-center flex-1 w-full px-2 max-w-[40%]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-4 lg:gap-6 mb-2">
               <button 
-                onClick={(e) => { e.stopPropagation(); setIsShuffle(!isShuffle); }} 
-                className={`transition-colors shrink-0 ${isShuffle ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-100'}`}
+                onClick={(e) => { e.stopPropagation(); handleSwapOrLoop(e); }} 
+                className="transition-colors shrink-0"
+                title={isShuffle && !isRepeat ? "Swap (Shuffle)" : !isShuffle && isRepeat ? "Loop (Repeat)" : "Normal"}
               >
-                <Shuffle size={18} />
+                {isShuffle && !isRepeat ? (
+                  <Shuffle size={18} className="text-emerald-400" />
+                ) : !isShuffle && isRepeat ? (
+                  <Repeat size={18} className="text-emerald-400" />
+                ) : (
+                  <Shuffle size={18} className="text-zinc-400 hover:text-zinc-100" />
+                )}
               </button>
               <button 
                 onClick={(e) => { e.stopPropagation(); handlePrevSong(); }} 
@@ -1982,12 +2003,6 @@ export default function App() {
                 className="text-zinc-300 hover:text-white transition-colors shrink-0"
               >
                 <SkipForward size={24} fill="currentColor" />
-              </button>
-              <button 
-                onClick={(e) => { e.stopPropagation(); setIsRepeat(!isRepeat); }} 
-                className={`transition-colors shrink-0 ${isRepeat ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-100'}`}
-              >
-                <Repeat size={18} />
               </button>
             </div>
             <div className="flex items-center gap-3 w-full text-xs text-zinc-500 font-medium">
@@ -2012,12 +2027,37 @@ export default function App() {
           </div>
 
           {/* Controls (Mobile Mini) */}
-          <div className="flex md:hidden items-center gap-4 pr-2 shrink-0">
+          <div className="flex md:hidden items-center gap-2 pr-2 shrink-0">
+            <button 
+              onClick={(e) => { e.stopPropagation(); handleSwapOrLoop(e); }} 
+              className="p-1 hover:text-white transition-colors"
+              title={isShuffle && !isRepeat ? "Swap (Shuffle)" : !isShuffle && isRepeat ? "Loop (Repeat)" : "Normal"}
+            >
+              {isShuffle && !isRepeat ? (
+                <Shuffle size={18} className="text-emerald-400" />
+              ) : !isShuffle && isRepeat ? (
+                <Repeat size={18} className="text-emerald-400" />
+              ) : (
+                <Shuffle size={18} className="text-zinc-500" />
+              )}
+            </button>
+            <button 
+              onClick={(e) => { e.stopPropagation(); handlePrevSong(); }} 
+              className="text-zinc-300 hover:text-white p-1 transition-colors"
+            >
+              <SkipBack size={20} fill="currentColor" />
+            </button>
             <button 
               onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
-              className="text-zinc-100 p-2"
+              className="text-zinc-100 p-1 hover:text-white transition-colors"
             >
-              {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+              {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+            </button>
+            <button 
+              onClick={(e) => { e.stopPropagation(); handleNextSong(); }} 
+              className="text-zinc-300 hover:text-white p-1 transition-colors"
+            >
+              <SkipForward size={20} fill="currentColor" />
             </button>
           </div>
 
@@ -2215,7 +2255,19 @@ export default function App() {
 
                 {/* Main Controls */}
                 <div className="flex items-center justify-between mb-6">
-                  <button onClick={() => setIsShuffle(!isShuffle)} className={`transition-colors ${isShuffle ? 'text-emerald-400' : 'text-zinc-400'}`}><Shuffle size={24} /></button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleSwapOrLoop(e); }} 
+                    className="transition-colors"
+                    title={isShuffle && !isRepeat ? "Swap (Shuffle)" : !isShuffle && isRepeat ? "Loop (Repeat)" : "Normal"}
+                  >
+                    {isShuffle && !isRepeat ? (
+                      <Shuffle size={24} className="text-emerald-400" />
+                    ) : !isShuffle && isRepeat ? (
+                      <Repeat size={24} className="text-emerald-400" />
+                    ) : (
+                      <Shuffle size={24} className="text-zinc-400 hover:text-zinc-100" />
+                    )}
+                  </button>
                   <button onClick={handlePrevSong} className="text-zinc-100 hover:text-white transition-colors"><SkipBack size={36} fill="currentColor" /></button>
                   <button 
                     onClick={togglePlay}
@@ -2224,7 +2276,7 @@ export default function App() {
                     {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-2" />}
                   </button>
                   <button onClick={handleNextSong} className="text-zinc-100 hover:text-white transition-colors"><SkipForward size={36} fill="currentColor" /></button>
-                  <button onClick={() => setIsRepeat(!isRepeat)} className={`transition-colors ${isRepeat ? 'text-emerald-400' : 'text-zinc-400'}`}><Repeat size={24} /></button>
+                  <div className="w-[24px]" />
                 </div>
 
                 {/* Bottom Actions */}
